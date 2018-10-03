@@ -1,5 +1,15 @@
 #include <FastLED.h>
 
+#define BLYNK_USE_DIRECT_CONNECT
+
+#include <SoftwareSerial.h>
+SoftwareSerial DebugSerial(A0, A1); // RX, TX
+
+#define BLYNK_PRINT DebugSerial
+#include <BlynkSimpleSerialBLE.h>
+
+char auth[] = "f795e337afbc4d0cba9ffbb03ef44668";
+
 FASTLED_USING_NAMESPACE
 
 #if defined(FASTLED_VERSION) && (FASTLED_VERSION < 3001000)
@@ -14,27 +24,29 @@ FASTLED_USING_NAMESPACE
 CRGB leds1[NUM_LEDS];
 CRGB leds2[NUM_LEDS];
 
-#define PIN_A 10 
-#define PIN_B 11
-
-#define PIN_1 13
-#define PIN_4 12
+#define PIN_8 13
+#define PIN_7 12
+#define PIN_6 11
+#define PIN_5 10
+#define PIN_4 A4
+#define PIN_3 A5
+#define PIN_2 9
+#define PIN_1 8
 
 #define READ_PIN 7
 #define READ_SELECT_A 2 
 #define READ_SELECT_B 3
 #define READ_SELECT_C 4
 
-
-#define WRITE_PIN 8
-#define WRITE_SELECT_A 9 
-#define WRITE_SELECT_B 10
-#define WRITE_SELECT_C 11
+#define COLOR_RED 255
+#define COLOR_BLUE 128
+#define COLOR_GREEN 100
 
 #define BRIGHTNESS          96
 #define FRAMES_PER_SECOND  300
 
 #define ANIMATION_DURATION 200
+
 
 void animate_lines(boolean diagonal);
 void animate_random();
@@ -49,94 +61,137 @@ void setup() {
   // set master brightness control
   FastLED.setBrightness(BRIGHTNESS);
 
-
-  Serial.begin(115200);  
+  DebugSerial.begin(9600);
+  DebugSerial.println("Waiting for connections...");
+  
+  Serial.begin(9600);  
   Serial.println("--- Start Serial Monitor SEND_RCVE ---");
 
-  pinMode(PIN_1, OUTPUT);
+  pinMode(PIN_8, OUTPUT);
+  pinMode(PIN_7, OUTPUT);
+  pinMode(PIN_6, OUTPUT);
+  pinMode(PIN_5, OUTPUT);
   pinMode(PIN_4, OUTPUT);
+  pinMode(PIN_3, OUTPUT);
+  pinMode(PIN_2, OUTPUT);
+  pinMode(PIN_1, OUTPUT);
 
   pinMode(READ_SELECT_A, OUTPUT);
   pinMode(READ_SELECT_B, OUTPUT);
   pinMode(READ_SELECT_C, OUTPUT);
 
-  pinMode(PIN_A, INPUT_PULLUP);
-  pinMode(PIN_B, INPUT_PULLUP);
-
   pinMode(READ_PIN, INPUT_PULLUP);
 
   randomSeed(42);   
-
+  
+  Serial.println("--- Start Blynk ---");
+  Blynk.begin(DebugSerial, auth);
+  Serial.println("--- Started Blynk ---");
 }
+
+bool animate = true;
 
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 int pos = 0;
 
 int loaded = 0;
+int state = 0;
+boolean sensorTestInit = false;
 
-void setLed(String name, int color);
-void setSquareColor(String loc, int color);
+void setLed(String name, int color, int fadeAmt);
+void setSquareColor(String locX, int locY, int color, int fadeAmt);
+void drawTeams(boolean showArea);
+
+BLYNK_WRITE(V1) // Enable SensorTest
+{
+  int pinValue = param.asInt(); // assigning incoming value from pin V1 to a variable
+  Serial.println(pinValue);
+  DebugSerial.println(pinValue);
+  loaded = 0;
+  if(pinValue) {
+    state = 1;
+  } else {
+    state = 0;
+  }
+}
 
 void loop()
 {
-  if(loaded < ANIMATION_DURATION){
+  if(animate && loaded < ANIMATION_DURATION){
     if(loaded < ANIMATION_DURATION/2)  animate_lines(true);
     else animate_random();
     loaded ++;
     delay(10);
   }
   else {
-    play_game();
+    switch(state){
+      case 1:
+        sensorTestInit = false;
+        sensorTest(); break;
+      default:
+        play_game();
+    }
+    
+    //
   }
   
-  //Serial.println("Location : " + String(randomX)+String(randomY));
-  
-  // send the 'leds' array out to the actual LED strip
   FastLED.show();  
-  // insert a delay to keep the framerate modest
   FastLED.delay(1000/FRAMES_PER_SECOND); 
-  // do some periodic updates
+  
+  // periodic updates
   EVERY_N_MILLISECONDS( 20 ) { 
     gHue++; 
   }
+
+  Blynk.run();
 }
 
-boolean pieceMoved = false;
+int pieceMoved = 0;
 
 void play_game(){
   fadeToBlackBy( leds1, NUM_LEDS, 255);
   fadeToBlackBy( leds2, NUM_LEDS, 255);
 
-  for (int i=0;i<8;i++){
-    setSquareColor('A'+i, 1, 128);
-    if(!pieceMoved || i!=1) setSquareColor('A'+i, 2, 128);
+  drawTeams(false);
 
-    setSquareColor('A'+i, 7, 255);
-    setSquareColor('A'+i, 8, 255);
+  for(int i=1;i<=8;i++){
+    demuxChessBoardColumnReader(i);
   }
-   
-  //chessBoardRowReader(1);
-  //chessBoardRowReader(4);
-
-  demuxChessBoardColumnReader(1);
-  demuxChessBoardColumnReader(4);
   
 }
 
-void demuxChessBoardColumnReader(int row) {
+void sensorTest() {
+  int sensorArray[8][8];
+  if(!sensorTestInit){
+   for(int i=0;i<8;i++){
+      for(int j=0;j<8;j++){
+        setSquareColor('A'+i, j+1, COLOR_RED, 0);
+      }
+    }
+    sensorTestInit = true;
+  } else {
+    for(int x=1;x<=8;x++) {
+      demuxChessBoardColumnReader(x);
+    }
+  }
+}
+
+int* demuxChessBoardColumnReader(int row) {
   int A, B, C = 0;
   int totalChannels = 8;
+  int output[8]; 
 
-  int newRow = row-1;
-  A = bitRead(newRow,0); //Take first bit from binary value of i channel.
-  B = bitRead(newRow,1); //Take second bit from binary value of i channel.
-  C = bitRead(newRow,2); //Take third bit from value of i channel.
-
-  digitalWrite(PIN_1, (1==row?HIGH:LOW) );
+  digitalWrite(PIN_8, (8==row?HIGH:LOW) );
+  digitalWrite(PIN_7, (7==row?HIGH:LOW) );
+  digitalWrite(PIN_6, (6==row?HIGH:LOW) );
+  digitalWrite(PIN_5, (5==row?HIGH:LOW) );
   digitalWrite(PIN_4, (4==row?HIGH:LOW) );
+  digitalWrite(PIN_3, (3==row?HIGH:LOW) );
+  digitalWrite(PIN_2, (2==row?HIGH:LOW) );
+  digitalWrite(PIN_1, (1==row?HIGH:LOW) );
   
-  Serial.println("Wrote True at "+String(C)+","+String(B)+","+String(A)+".");
-  delay(10);
+  //Serial.println("Wrote True at "+String(C)+","+String(B)+","+String(A)+".");
+  //delay(10);
   for(int i=0; i<totalChannels; i++){
     A = bitRead(i,0); //Take first bit from binary value of i channel.
     B = bitRead(i,1); //Take second bit from binary value of i channel.
@@ -146,32 +201,33 @@ void demuxChessBoardColumnReader(int row) {
     digitalWrite(READ_SELECT_B, B);
     digitalWrite(READ_SELECT_C, C);
 
-    Serial.println("Read value at "+String(C)+","+String(B)+","+String(A)+": " + String(digitalRead(READ_PIN)));
+    //Serial.println("Reading value at "+String(C)+","+String(B)+","+String(A)+": " + String(digitalRead(READ_PIN)));
+    
+    pieceMoved = 0;
+    output[i] = 0;
     if(digitalRead(READ_PIN)==HIGH){
-        setSquareColor('A'+i, row, 100);
+        setSquareColor('A'+i, row, COLOR_GREEN, 0);
+        output[i] = 1;
+        //Serial.println("Read value at "+String(C)+","+String(B)+","+String(A)+": " + String(digitalRead(READ_PIN)));
     }
   }
-  delay(100);
+  delay(10);
+  return output;
 }
 
-
-void chessBoardRowReader(int row){
-  
-  digitalWrite(PIN_1, (1==row?HIGH:LOW) );
-  digitalWrite(PIN_4, (4==row?HIGH:LOW) );
-  
-  Serial.println("Row : " + String(row) + ", Values : [ A : " + String(analogRead(PIN_A)) + "(" + String(digitalRead(PIN_A)==HIGH) +"), B : "+ String(analogRead(PIN_B)) + "(" + String(digitalRead(PIN_B)==HIGH) +")]\n");
-  if(digitalRead(PIN_A)==HIGH){
-      setSquareColor('A', row, 100);
+void drawTeams(boolean showArea){
+  for (int i=0;i<8;i++){
+    setSquareColor('A'+i, 1, 128, 0);
+    setSquareColor('A'+i, 2, 128, 0);
+    if(showArea) {
+      setSquareColor('A'+i, 3, 128, 0);
+      setSquareColor('A'+i, 4, 128, 0);
+      setSquareColor('A'+i, 5, 255, 0);
+      setSquareColor('A'+i, 6, 255, 0);
+    }
+    setSquareColor('A'+i, 7, 255, 0);
+    setSquareColor('A'+i, 8, 255, 0);
   }
-  if(digitalRead(PIN_B)==HIGH){
-      pieceMoved = true;
-      //Serial.println("move: B-"+String(2)+" to B-"+row);
-      setSquareColor('B', row, row==4?128:100);
-  } else {
-    pieceMoved = false;
-  }
-  delay(100);
 }
 
 void animate_random(){
@@ -182,7 +238,7 @@ void animate_random(){
   fadeToBlackBy( leds1, NUM_LEDS, 20);
   fadeToBlackBy( leds2, NUM_LEDS, 20);
   
-  setSquareColor(randomX, randomY, color);
+  setSquareColor(randomX, randomY, color, 0);
 }
 
 void animate_lines(boolean diagonal){
@@ -192,20 +248,20 @@ void animate_lines(boolean diagonal){
   int incr=1;
   for(int i=0;i<8;i++)
   {
-    setSquareColor('A',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
-    setSquareColor('B',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
-    setSquareColor('C',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
-    setSquareColor('D',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
-    setSquareColor('E',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
-    setSquareColor('F',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
-    setSquareColor('G',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
-    setSquareColor('H',(pos+incr)%8+1,gHue);diagonal?incr++:incr;
+    setSquareColor('A',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
+    setSquareColor('B',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
+    setSquareColor('C',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
+    setSquareColor('D',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
+    setSquareColor('E',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
+    setSquareColor('F',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
+    setSquareColor('G',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
+    setSquareColor('H',(pos+incr)%8+1,gHue,0);diagonal?incr++:incr;
   }
   pos++;
   if(pos>8) pos = 0;
 }
 
-void setSquareColor(char locX, int locY, int color) {
+void setSquareColor(char locX, int locY, int color, int fadeAmt) {
   // L : ABCD
   // R : EFGH
   //Serial.println("Location:" + String(locX)+String(locY));
@@ -232,7 +288,7 @@ void setSquareColor(char locX, int locY, int color) {
     break;    
   }
   int ledId1 = offset+2*(flip?8-locY:locY-1);
-  setLed(String(side)+String(ledId1), color);
+  setLed(String(side)+String(ledId1), color, fadeAmt);
 
   switch(ledId1){
     case 0: 
@@ -242,12 +298,12 @@ void setSquareColor(char locX, int locY, int color) {
       break;
     default:
       int ledId2 = flip?ledId1+1:ledId1-1;
-      setLed(String(side)+String(ledId2), color);
+      setLed(String(side)+String(ledId2), color, fadeAmt);
   }
   
 }
 
-void setLed(String name, int color) {
+void setLed(String name, int color, int fadeAmt) {
     char ledSet = name.startsWith("L")?'L':'R';
     int i = name.substring(1).toInt();
     int value = 255;
@@ -265,9 +321,11 @@ void setLed(String name, int color) {
     switch(ledSet){
       case 'L':
         leds1[i] = CHSV( color, 255, value);
+        leds1[i].fadeLightBy( fadeAmt );
         break;
       case 'R':
         leds2[i] = CHSV( color, 255, value); 
+        leds1[i].fadeLightBy( fadeAmt );
         break;
     }
     
