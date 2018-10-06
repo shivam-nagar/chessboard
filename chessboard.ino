@@ -43,15 +43,17 @@ CRGB leds2[NUM_LEDS];
 #define COLOR_GREEN 100
 
 #define BRIGHTNESS          96
-#define FRAMES_PER_SECOND  300
+#define FRAMES_PER_SECOND  1000
 
 #define ANIMATION_DURATION 200
 
+int color_team1 = COLOR_RED;
+int color_team2 = COLOR_BLUE;
 
 void animate_lines(boolean diagonal);
 void animate_random();
 void setup() {
-  delay(3000); // 3 second delay for recovery
+  delay(1000); // 3 second delay for recovery
   
   // tell FastLED about the LED strip configuration
   FastLED.addLeds<LED_TYPE,DATA_PIN1,COLOR_ORDER>(leds1, NUM_LEDS).setCorrection(TypicalLEDStrip);
@@ -105,15 +107,41 @@ void drawTeams(boolean showArea);
 BLYNK_WRITE(V1) // Enable SensorTest
 {
   int pinValue = param.asInt(); // assigning incoming value from pin V1 to a variable
-  Serial.println(pinValue);
-  DebugSerial.println(pinValue);
   loaded = 0;
   if(pinValue) {
     state = 1;
+    sensorTestInit = false;
   } else {
     state = 0;
   }
 }
+
+BLYNK_WRITE(V2) // Team1 color (zeRGBa)
+{
+  int r = param[0].asInt();
+  int g = param[1].asInt();
+  int b = param[2].asInt();
+
+  CRGB rgbColor = CRGB(r,g,b);
+  CHSV hsvColor = rgb2hsv_approximate(rgbColor);
+
+  color_team1 = hsvColor.hue;
+}
+
+
+BLYNK_WRITE(V3) // Team2 color (zeRGBa)
+{
+  int r = param[0].asInt();
+  int g = param[1].asInt();
+  int b = param[2].asInt();
+
+  CRGB rgbColor = CRGB(r,g,b);
+  CHSV hsvColor = rgb2hsv_approximate(rgbColor);
+
+  color_team2 = hsvColor.hue;
+}
+
+
 
 void loop()
 {
@@ -126,7 +154,6 @@ void loop()
   else {
     switch(state){
       case 1:
-        sensorTestInit = false;
         sensorTest(); break;
       default:
         play_game();
@@ -149,8 +176,8 @@ void loop()
 int pieceMoved = 0;
 
 void play_game(){
-  fadeToBlackBy( leds1, NUM_LEDS, 255);
-  fadeToBlackBy( leds2, NUM_LEDS, 255);
+  fadeToBlackBy( leds1, NUM_LEDS, 100);
+  fadeToBlackBy( leds2, NUM_LEDS, 100);
 
   drawTeams(false);
 
@@ -217,16 +244,16 @@ int* demuxChessBoardColumnReader(int row) {
 
 void drawTeams(boolean showArea){
   for (int i=0;i<8;i++){
-    setSquareColor('A'+i, 1, 128, 0);
-    setSquareColor('A'+i, 2, 128, 0);
+    setSquareColor('A'+i, 1, color_team1, 0);
+    setSquareColor('A'+i, 2, color_team1, 0);
     if(showArea) {
-      setSquareColor('A'+i, 3, 128, 0);
-      setSquareColor('A'+i, 4, 128, 0);
-      setSquareColor('A'+i, 5, 255, 0);
-      setSquareColor('A'+i, 6, 255, 0);
+      setSquareColor('A'+i, 3, color_team1, 0);
+      setSquareColor('A'+i, 4, color_team1, 0);
+      setSquareColor('A'+i, 5, color_team2, 0);
+      setSquareColor('A'+i, 6, color_team2, 0);
     }
-    setSquareColor('A'+i, 7, 255, 0);
-    setSquareColor('A'+i, 8, 255, 0);
+    setSquareColor('A'+i, 7, color_team2, 0);
+    setSquareColor('A'+i, 8, color_team2, 0);
   }
 }
 
