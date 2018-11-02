@@ -5,10 +5,12 @@
 #include <SoftwareSerial.h>
 SoftwareSerial DebugSerial(A0, A1); // RX, TX
 
+#ifdef BLYNK_ENABLED
 #define BLYNK_PRINT DebugSerial
 #include <BlynkSimpleSerialBLE.h>
 
 char auth[] = "f795e337afbc4d0cba9ffbb03ef44668";
+#endif
 
 FASTLED_USING_NAMESPACE
 
@@ -32,6 +34,8 @@ CRGB leds2[NUM_LEDS];
 #define PIN_3 A5
 #define PIN_2 9
 #define PIN_1 8
+
+#define TOGGLE_STATE_PIN A3
 
 #define READ_PIN 7
 #define READ_SELECT_A 2 
@@ -82,13 +86,16 @@ void setup() {
   pinMode(READ_SELECT_B, OUTPUT);
   pinMode(READ_SELECT_C, OUTPUT);
 
+  pinMode(TOGGLE_STATE_PIN, INPUT);
   pinMode(READ_PIN, INPUT_PULLUP);
 
   randomSeed(42);   
-  
+
+  #ifdef BLYNK_ENABLED
   Serial.println("--- Start Blynk ---");
   Blynk.begin(DebugSerial, auth);
   Serial.println("--- Started Blynk ---");
+  #endif
 }
 
 bool animate = true;
@@ -97,23 +104,33 @@ uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 int pos = 0;
 
 int loaded = 0;
-int state = 0;
+int state = 1;
 boolean sensorTestInit = false;
 
 void setLed(String name, int color, int fadeAmt);
 void setSquareColor(String locX, int locY, int color, int fadeAmt);
 void drawTeams(boolean showArea);
 
-BLYNK_WRITE(V1) // Enable SensorTest
-{
-  int pinValue = param.asInt(); // assigning incoming value from pin V1 to a variable
+
+void setSensorTestState(int setValue) {
   loaded = 0;
-  if(pinValue) {
+  if(setValue) {
     state = 1;
     sensorTestInit = false;
   } else {
     state = 0;
   }
+}
+
+void toggleSensorTestState() {
+  setSensorTestState(state==1?0:1);
+}
+
+#ifdef BLYNK_ENABLED
+BLYNK_WRITE(V1) // Enable SensorTest
+{
+  int pinValue = param.asInt(); // assigning incoming value from pin V1 to a variable
+  setSensorTestState(pinValue);
 }
 
 BLYNK_WRITE(V2) // Team1 color (zeRGBa)
@@ -140,8 +157,7 @@ BLYNK_WRITE(V3) // Team2 color (zeRGBa)
 
   color_team2 = hsvColor.hue;
 }
-
-
+#endif
 
 void loop()
 {
@@ -152,6 +168,12 @@ void loop()
     delay(10);
   }
   else {
+    if(digitalRead(TOGGLE_STATE_PIN)==HIGH) {
+      animate = true;
+      toggleSensorTestState();
+      return;
+    }
+    
     switch(state){
       case 1:
         sensorTest(); break;
@@ -169,8 +191,10 @@ void loop()
   EVERY_N_MILLISECONDS( 20 ) { 
     gHue++; 
   }
-
+  
+  #ifdef BLYNK_ENABLED
   Blynk.run();
+  #endif
 }
 
 int pieceMoved = 0;
